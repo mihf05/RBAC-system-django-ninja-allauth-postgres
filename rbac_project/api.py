@@ -14,7 +14,6 @@ from rbac.api import (
     stats_router,
     activity_router,
 )
-from rbac.api_test import test_router
 
 api = NinjaAPI(
     title="RBAC API",
@@ -30,7 +29,6 @@ api.add_router("/resources/", resources_router, tags=["Resources"])
 api.add_router("/users/", users_router, tags=["Users"])
 api.add_router("/stats/", stats_router, tags=["Statistics"])
 api.add_router("/activity/", activity_router, tags=["Activity Log"])
-api.add_router("/test/", test_router, tags=["RBAC Testing Ground"])
 
 
 @api.exception_handler(ValidationError)

@@ -12,7 +12,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from .models import Role, Resource, Permission, UserRoleAssignment, Invitation, ActivityLog
-from .permissions import require_admin, require_auth
+from .permissions import require_admin, require_auth, require_permission
 from .schemas import (
     RoleCreateSchema, RoleUpdateSchema, RoleResponseSchema, RoleListSchema,
     SetPermissionsSchema, PermissionResponseSchema,
@@ -65,7 +65,7 @@ def _build_role_response(role):
 @roles_router.get("/", response=list[RoleListSchema])
 def list_roles(request, search: str = "", active_only: bool = False):
     """List all roles with optional search and filtering."""
-    require_admin(request)
+    require_permission(request, "Roles", "read")
 
     qs = Role.objects.all()
     if search:
@@ -90,7 +90,7 @@ def list_roles(request, search: str = "", active_only: bool = False):
 @roles_router.post("/", response={201: RoleResponseSchema, 400: MessageSchema})
 def create_role(request, payload: RoleCreateSchema):
     """Create a new role."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Roles", "write")
 
     if Role.objects.filter(name__iexact=payload.name.strip()).exists():
         raise HttpError(400, f"A role named '{payload.name}' already exists")
@@ -121,7 +121,7 @@ def create_role(request, payload: RoleCreateSchema):
 @roles_router.get("/{role_id}/", response={200: RoleResponseSchema, 404: MessageSchema})
 def get_role(request, role_id: int):
     """Get a role's details including its full permission matrix."""
-    require_admin(request)
+    require_permission(request, "Roles", "read")
 
     try:
         role = Role.objects.get(id=role_id)
@@ -134,7 +134,7 @@ def get_role(request, role_id: int):
 @roles_router.put("/{role_id}/", response={200: RoleResponseSchema, 400: MessageSchema, 404: MessageSchema})
 def update_role(request, role_id: int, payload: RoleUpdateSchema):
     """Update a role's name, description, or status."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Roles", "update")
 
     try:
         role = Role.objects.get(id=role_id)
@@ -168,7 +168,7 @@ def update_role(request, role_id: int, payload: RoleUpdateSchema):
 @roles_router.delete("/{role_id}/", response={200: MessageSchema, 400: MessageSchema, 404: MessageSchema})
 def delete_role(request, role_id: int):
     """Delete a role (system roles cannot be deleted)."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Roles", "delete")
 
     try:
         role = Role.objects.get(id=role_id)
@@ -195,7 +195,7 @@ def delete_role(request, role_id: int):
 @roles_router.post("/{role_id}/permissions/", response={200: RoleResponseSchema, 400: MessageSchema, 404: MessageSchema})
 def set_permissions(request, role_id: int, payload: SetPermissionsSchema):
     """Set the full permissions matrix for a role."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Roles", "update")
 
     try:
         role = Role.objects.get(id=role_id)
@@ -242,7 +242,10 @@ resources_router = Router()
 @resources_router.get("/", response=list[ResourceResponseSchema])
 def list_resources(request, search: str = ""):
     """List all resources."""
-    require_admin(request)
+    require_permission(request, "Features & APIs", "read")
+
+    from .permissions import sync_code_resources
+    sync_code_resources()
 
     qs = Resource.objects.all()
     if search:
@@ -267,7 +270,7 @@ def list_resources(request, search: str = ""):
 @resources_router.post("/", response={201: ResourceResponseSchema, 400: MessageSchema})
 def create_resource(request, payload: ResourceCreateSchema):
     """Create a new resource."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Features & APIs", "write")
 
     if Resource.objects.filter(name__iexact=payload.name.strip()).exists():
         raise HttpError(400, f"A resource named '{payload.name}' already exists")
@@ -310,7 +313,7 @@ def create_resource(request, payload: ResourceCreateSchema):
 @resources_router.put("/{resource_id}/", response={200: ResourceResponseSchema, 400: MessageSchema, 404: MessageSchema})
 def update_resource(request, resource_id: int, payload: ResourceUpdateSchema):
     """Update a resource."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Features & APIs", "update")
 
     try:
         resource = Resource.objects.get(id=resource_id)
@@ -361,7 +364,7 @@ def update_resource(request, resource_id: int, payload: ResourceUpdateSchema):
 @resources_router.delete("/{resource_id}/", response={200: MessageSchema, 404: MessageSchema})
 def delete_resource(request, resource_id: int):
     """Delete a resource and its associated permissions."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Features & APIs", "delete")
 
     try:
         resource = Resource.objects.get(id=resource_id)
@@ -420,7 +423,7 @@ def list_users(
     page_size: int = 20,
 ):
     """List all users with search, filter, and pagination."""
-    require_admin(request)
+    require_permission(request, "Users", "read")
 
     qs = User.objects.prefetch_related('role_assignments__role').all()
 
@@ -453,7 +456,7 @@ def list_users(
 @users_router.get("/{user_id}/", response={200: UserListSchema, 404: MessageSchema})
 def get_user(request, user_id: int):
     """Get detailed user info."""
-    require_admin(request)
+    require_permission(request, "Users", "read")
 
     try:
         user = User.objects.prefetch_related('role_assignments__role').get(id=user_id)
@@ -466,7 +469,7 @@ def get_user(request, user_id: int):
 @users_router.post("/{user_id}/assign-role/", response={200: UserListSchema, 400: MessageSchema, 404: MessageSchema})
 def assign_role(request, user_id: int, payload: AssignRoleSchema):
     """Assign a role to a user."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Users", "update")
 
     try:
         user = User.objects.get(id=user_id)
@@ -502,7 +505,7 @@ def assign_role(request, user_id: int, payload: AssignRoleSchema):
 @users_router.post("/{user_id}/revoke-role/", response={200: UserListSchema, 400: MessageSchema, 404: MessageSchema})
 def revoke_role(request, user_id: int, payload: AssignRoleSchema):
     """Revoke a role from a user."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Users", "update")
 
     try:
         user = User.objects.get(id=user_id)
@@ -535,7 +538,7 @@ def revoke_role(request, user_id: int, payload: AssignRoleSchema):
 @users_router.post("/{user_id}/deactivate/", response={200: UserListSchema, 400: MessageSchema, 404: MessageSchema})
 def deactivate_user(request, user_id: int):
     """Deactivate a user account."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Users", "update")
 
     try:
         user = User.objects.get(id=user_id)
@@ -565,7 +568,7 @@ def deactivate_user(request, user_id: int):
 @users_router.post("/{user_id}/activate/", response={200: UserListSchema, 400: MessageSchema, 404: MessageSchema})
 def activate_user(request, user_id: int):
     """Activate a user account."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Users", "update")
 
     try:
         user = User.objects.get(id=user_id)
@@ -592,7 +595,7 @@ def activate_user(request, user_id: int):
 @users_router.post("/invite/", response={201: InvitationResponseSchema, 400: MessageSchema})
 def invite_user(request, payload: InviteUserSchema):
     """Invite a new user with pre-assigned roles."""
-    admin_user = require_admin(request)
+    admin_user = require_permission(request, "Users", "write")
 
     # Check if user already exists
     if User.objects.filter(email=payload.email).exists():
@@ -643,7 +646,7 @@ def invite_user(request, payload: InviteUserSchema):
 @users_router.get("/invitations/list/", response=list[InvitationResponseSchema])
 def list_invitations(request):
     """List all invitations."""
-    require_admin(request)
+    require_permission(request, "Users", "read")
 
     invitations = Invitation.objects.prefetch_related('roles').all()[:50]
     results = []
@@ -668,7 +671,7 @@ stats_router = Router()
 @stats_router.get("/overview/", response=OverviewStatsSchema)
 def get_overview_stats(request):
     """Get dashboard overview statistics."""
-    require_admin(request)
+    require_permission(request, "Dashboard", "read")
 
     return {
         'total_users': User.objects.count(),
@@ -684,7 +687,7 @@ def get_overview_stats(request):
 @stats_router.get("/users-per-role/", response=list[ChartDataPointSchema])
 def get_users_per_role(request):
     """Get user count per role for bar chart."""
-    require_admin(request)
+    require_permission(request, "Dashboard", "read")
 
     colors = ['#2563eb', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6']
     roles = Role.objects.filter(is_active=True).annotate(
@@ -704,7 +707,7 @@ def get_users_per_role(request):
 @stats_router.get("/roles-by-status/", response=list[ChartDataPointSchema])
 def get_roles_by_status(request):
     """Get roles grouped by active/inactive status for pie chart."""
-    require_admin(request)
+    require_permission(request, "Dashboard", "read")
 
     active = Role.objects.filter(is_active=True).count()
     inactive = Role.objects.filter(is_active=False).count()
@@ -730,24 +733,7 @@ def list_activity(
     page_size: int = 25,
 ):
     """Get paginated activity log with search and filter."""
-    user = require_auth(request)
-
-    # Allow if the user is an Admin, OR has explicit read permission on "Audit Logs"
-    is_admin = False
-    if user.is_staff or user.is_superuser:
-        is_admin = True
-    else:
-        from rbac.models import UserRoleAssignment
-        is_admin = UserRoleAssignment.objects.filter(
-            user=user,
-            role__name='Admin',
-            role__is_active=True,
-        ).exists()
-
-    if not is_admin:
-        from .permissions import check_permission
-        if not check_permission(user, "Audit Logs", "read"):
-            raise HttpError(403, "You do not have permission to read 'Audit Logs'")
+    require_permission(request, "Activity Log", "read")
 
     qs = ActivityLog.objects.select_related('user').all()
 

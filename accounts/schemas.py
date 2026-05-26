@@ -104,6 +104,7 @@ class UserResponseSchema(Schema):
     date_joined: datetime
     avatar: str
     roles: List[str] = []
+    permissions: Optional[dict] = {}
 
 
 class AuthResponseSchema(Schema):

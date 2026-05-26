@@ -28,6 +28,11 @@ document.addEventListener('DOMContentLoaded', () => {
     async function initApp() {
         setupNavigation();
         setupEventListeners();
+        try {
+            await Auth.fetchCurrentUser();
+        } catch (err) {
+            console.error('Failed to sync user profile:', err);
+        }
         updateUserUI();
         await loadDashboard();
     }
@@ -45,17 +50,29 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('topbarAvatar').textContent = initials;
         document.getElementById('topbarUsername').textContent = name;
 
-        // Dynamic sidebar link adjustment based on roles
-        const isAdmin = user.is_staff || (user.roles && user.roles.some(r => r.name === 'Admin'));
-        if (!isAdmin) {
-            document.getElementById('nav-roles')?.style.setProperty('display', 'none', 'important');
-            document.getElementById('nav-users')?.style.setProperty('display', 'none', 'important');
-            document.getElementById('nav-features')?.style.setProperty('display', 'none', 'important');
-        } else {
-            document.getElementById('nav-roles')?.style.setProperty('display', '', '');
-            document.getElementById('nav-users')?.style.setProperty('display', '', '');
-            document.getElementById('nav-features')?.style.setProperty('display', '', '');
-        }
+        // Dynamic sidebar link adjustment based on permissions
+        const isAdmin = user.is_staff || (user.roles && user.roles.some(r => r === 'Admin' || r.name === 'Admin'));
+        const hasPerm = (resource, action) => {
+            if (isAdmin) return true;
+            return user.permissions && user.permissions[resource] && user.permissions[resource][action];
+        };
+
+        const setNavDisplay = (id, resource) => {
+            const el = document.getElementById(id);
+            if (el) {
+                if (hasPerm(resource, 'read')) {
+                    el.style.setProperty('display', '', '');
+                } else {
+                    el.style.setProperty('display', 'none', 'important');
+                }
+            }
+        };
+
+        setNavDisplay('nav-dashboard', 'Dashboard');
+        setNavDisplay('nav-roles', 'Roles');
+        setNavDisplay('nav-users', 'Users');
+        setNavDisplay('nav-features', 'Features & APIs');
+        setNavDisplay('nav-activity', 'Activity Log');
     }
 
     // ══════════════════════════════════════════════════════════
@@ -166,41 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('featureForm').addEventListener('submit', handleSaveFeature);
         document.getElementById('featureSearchInput').addEventListener('input', debounce(() => loadFeatures(), 300));
 
-        // ── Live API Testing Ground ───────────────────────────
-        document.getElementById('btnTestGetArticles').addEventListener('click', () => runLiveTest('GET', '/test/articles/'));
-        document.getElementById('btnTestPostArticle').addEventListener('click', () => runLiveTest('POST', '/test/articles/', { title: 'Dynamic Test Title', content: 'This article was generated live in real time using the dynamic API testing ground!' }));
-        document.getElementById('btnTestPutArticle').addEventListener('click', async () => {
-            try {
-                const consoleEl = document.getElementById('apiTestConsole');
-                consoleEl.innerHTML = `<span style="color:#a855f7;">// Running PUT pre-fetch to locate an article...</span>`;
-                const articles = await Auth.apiCall('/test/articles/');
-                if (articles && articles.length > 0) {
-                    const id = articles[0].id;
-                    runLiveTest('PUT', `/test/articles/${id}/`, { title: 'Dynamically Updated Title', content: 'Updated content successfully!' });
-                } else {
-                    consoleEl.innerHTML += `<span style="color:#ef4444;"><br/>[Pre-fetch Error] No articles exist to update. Please click POST (Write) first to create an article.</span>`;
-                }
-            } catch (err) {
-                document.getElementById('apiTestConsole').innerHTML = `<span style="color:#ef4444;">[Pre-fetch Error] ${escapeHtml(err.message)}</span>`;
-            }
-        });
-        document.getElementById('btnTestDeleteArticle').addEventListener('click', async () => {
-            try {
-                const consoleEl = document.getElementById('apiTestConsole');
-                consoleEl.innerHTML = `<span style="color:#a855f7;">// Running DELETE pre-fetch to locate an article...</span>`;
-                const articles = await Auth.apiCall('/test/articles/');
-                if (articles && articles.length > 0) {
-                    const id = articles[0].id;
-                    runLiveTest('DELETE', `/test/articles/${id}/`);
-                } else {
-                    consoleEl.innerHTML += `<span style="color:#ef4444;"><br/>[Pre-fetch Error] No articles exist to delete. Please click POST (Write) first to create an article.</span>`;
-                }
-            } catch (err) {
-                document.getElementById('apiTestConsole').innerHTML = `<span style="color:#ef4444;">[Pre-fetch Error] ${escapeHtml(err.message)}</span>`;
-            }
-        });
-        document.getElementById('btnTestGetSettings').addEventListener('click', () => runLiveTest('GET', '/test/settings/'));
-        document.getElementById('btnTestPutSettings').addEventListener('click', () => runLiveTest('PUT', '/test/settings/', { site_name: 'Custom LMS Core ' + Math.floor(Math.random()*100), maintenance_mode: true }));
+
 
         // Invite User Modal
         document.getElementById('btnInviteUser').addEventListener('click', showInviteModal);
@@ -1167,50 +1150,6 @@ document.addEventListener('DOMContentLoaded', () => {
             await loadFeatures();
         } catch (err) {
             showToast(err.message, 'error');
-        }
-    }
-
-    // ══════════════════════════════════════════════════════════
-    // LIVE PERMISSIONS TESTING GROUND
-    // ══════════════════════════════════════════════════════════
-
-    async function runLiveTest(method, endpoint, body = null) {
-        const consoleEl = document.getElementById('apiTestConsole');
-        consoleEl.innerHTML = `<span style="color:#60a5fa;">&gt;&gt;&gt; ${method} http://localhost:8000/api${endpoint}</span><br/>`;
-        consoleEl.innerHTML += `<span style="color:#64748b;">// Sending Bearer Access Token in Authorization header...</span><br/>`;
-        
-        if (body) {
-            consoleEl.innerHTML += `<span style="color:#e2e8f0;display:block;margin:6px 0;">Payload: ${JSON.stringify(body, null, 2)}</span>`;
-        }
-
-        try {
-            const start = performance.now();
-            const response = await fetch(`/api${endpoint}`, {
-                method: method,
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${Auth.getToken('access')}`
-                },
-                body: body ? JSON.stringify(body) : null
-            });
-            const duration = Math.round(performance.now() - start);
-
-            const statusColor = response.status >= 200 && response.status < 300 ? '#10b981' : '#ef4444';
-            consoleEl.innerHTML += `<br/><span style="color:${statusColor};font-weight:bold;">&lt;&lt;&lt; HTTP/1.1 ${response.status} ${response.statusText} (${duration}ms)</span><br/>`;
-
-            const json = await response.json();
-            consoleEl.innerHTML += `<span style="color:#38bdf8;white-space:pre-wrap;display:block;margin-top:6px;">${JSON.stringify(json, null, 2)}</span>`;
-            consoleEl.scrollTop = consoleEl.scrollHeight;
-
-            if (response.status >= 200 && response.status < 300) {
-                showToast("Request authorized & executed successfully", "success");
-            } else {
-                showToast(`Request failed: Status ${response.status}`, "error");
-            }
-        } catch (err) {
-            consoleEl.innerHTML += `<br/><span style="color:#ef4444;font-weight:bold;">[Network / Integration Error]</span><br/>`;
-            consoleEl.innerHTML += `<span style="color:#ef4444;">${escapeHtml(err.message)}</span>`;
-            showToast("Network or server check error", "error");
         }
     }
 

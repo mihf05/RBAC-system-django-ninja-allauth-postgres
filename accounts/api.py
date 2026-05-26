@@ -25,12 +25,50 @@ router = Router()
 
 
 def get_user_response(user) -> dict:
-    """Build user response dict with roles."""
-    from rbac.models import UserRoleAssignment
+    """Build user response dict with roles and permissions."""
+    from rbac.permissions import sync_code_resources
+    sync_code_resources()
+
+    from rbac.models import UserRoleAssignment, Permission, Resource
     roles = list(
         UserRoleAssignment.objects.filter(user=user, role__is_active=True)
         .values_list('role__name', flat=True)
     )
+
+    # Build a dictionary of permissions per resource
+    permissions_dict = {}
+    is_admin = user.is_staff or user.is_superuser or 'Admin' in roles
+
+    # Fetch all active resources
+    resources = Resource.objects.filter(is_active=True)
+    for res in resources:
+        if is_admin:
+            permissions_dict[res.name] = {
+                'read': res.has_read,
+                'write': res.has_write,
+                'update': res.has_update,
+                'delete': res.has_delete,
+            }
+        else:
+            permissions_dict[res.name] = {
+                'read': False,
+                'write': False,
+                'update': False,
+                'delete': False,
+            }
+
+    if not is_admin:
+        role_ids = UserRoleAssignment.objects.filter(user=user, role__is_active=True).values_list('role_id', flat=True)
+        if role_ids:
+            perms = Permission.objects.filter(role_id__in=role_ids, resource__is_active=True).select_related('resource')
+            for perm in perms:
+                res_name = perm.resource.name
+                if res_name in permissions_dict:
+                    permissions_dict[res_name]['read'] = permissions_dict[res_name]['read'] or perm.can_read
+                    permissions_dict[res_name]['write'] = permissions_dict[res_name]['write'] or perm.can_write
+                    permissions_dict[res_name]['update'] = permissions_dict[res_name]['update'] or perm.can_update
+                    permissions_dict[res_name]['delete'] = permissions_dict[res_name]['delete'] or perm.can_delete
+
     return {
         'id': user.id,
         'email': user.email,
@@ -44,6 +82,7 @@ def get_user_response(user) -> dict:
         'date_joined': user.date_joined,
         'avatar': user.avatar or '',
         'roles': roles,
+        'permissions': permissions_dict,
     }
 
 
